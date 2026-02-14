@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ file.filename }} - Dashboard</title>
+    
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.datatables.net/1.13.7/css/dataTables.bootstrap5.min.css" rel="stylesheet">
+    <link href="https://cdn.datatables.net/buttons/2.4.2/css/buttons.bootstrap5.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+
+    <style>
+        body { background-color: #f4f7f6; padding: 20px; font-family: 'Inter', sans-serif; }
+        .card-custom { border: none; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); background: white; margin-bottom: 20px; }
+        
+        /* Pílulas de Controle */
+        .column-pill {
+            cursor: pointer; padding: 6px 16px; border-radius: 20px; border: 1px solid #dee2e6;
+            background: #fff; font-size: 0.85rem; color: #6c757d; transition: 0.2s;
+            display: inline-flex; align-items: center; user-select: none;
+        }
+        .column-pill:hover { border-color: #0d6efd; color: #0d6efd; }
+        .column-pill.active { background: #0d6efd; border-color: #0d6efd; color: #fff; box-shadow: 0 2px 6px rgba(13,110,253,0.3); }
+        .column-pill i { margin-right: 8px; font-size: 0.7rem; }
+
+        /* Tabela Excel Style */
+        .filter-input { width: 100%; padding: 4px 8px; font-size: 0.8rem; border: 1px solid #ced4da; border-radius: 4px; }
+        table.dataTable thead th { background: #f8f9fa; border-bottom: 2px solid #eee; }
+
+        /* Gráficos em Grid */
+        .chart-card { height: 320px; padding: 15px; }
+        #chartsArea { display: none; }
+    </style>
+</head>
+<body>
+
+<div id="loading" style="position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(255,255,255,0.9); z-index:9999; display:flex; flex-direction:column; justify-content:center; align-items:center;">
+    <div class="spinner-border text-primary"></div>
+    <h5 class="mt-3">Processando {{ file.row_count }} registros...</h5>
+</div>
+
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h3 class="fw-bold"><i class="fas fa-file-invoice text-primary me-2"></i>{{ file.filename }}</h3>
+        <a href="{{ url_for('index') }}" class="btn btn-sm btn-outline-dark">Voltar</a>
+    </div>
+
+    <div class="card card-custom p-3">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <h6 class="fw-bold text-muted mb-0">Colunas Ativas:</h6>
+            <div>
+                <button class="btn btn-xs btn-link text-decoration-none" onclick="toggleAll(true)">Marcar Todas</button>
+                <button class="btn btn-xs btn-link text-decoration-none text-danger" onclick="toggleAll(false)">Desmarcar Todas</button>
+            </div>
+        </div>
+        <div class="d-flex flex-wrap gap-2" id="pillBox"></div>
+    </div>
+
+    <div class="card card-custom p-0 overflow-hidden">
+        <table id="mainTable" class="table table-hover w-100 mb-0">
+            <thead>
+                <tr>{% for c in columns %}<th>{{ c }}</th>{% endfor %}</tr>
+                <tr class="bg-light">
+                    {% for c in columns %}
+                    <th class="p-1"><input type="text" class="filter-input" placeholder="Filtrar..."></th>
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+
+    <div id="chartsArea" class="row g-4 mt-2 mb-5"></div>
+</div>
+
+<script src="https://code.jquery.com/jquery-3.7.0.js"></script>
+<script src="https://cdn.datatables.net/1.13.7/js/jquery.dataTables.min.js"></script>
+<script src="https://cdn.datatables.net/1.13.7/js/dataTables.bootstrap5.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<script>
+    const columns = {{ columns | tojson }};
+    let table, charts = {}, isFiltered = false;
+
+    $(document).ready(function() {
+        $.ajax({
+            url: '/api/data/{{ file.id }}',
+            dataType: 'json',
+            success: function(json) {
+                initTable(json);
+                renderPills();
+                $('#loading').fadeOut();
+            }
+        });
+    });
+
+    function initTable(data) {
+        table = $('#mainTable').DataTable({
+            data: data,
+            columns: columns.map(c => ({ data: c })),
+            pageLength: 10,
+            deferRender: true,
+            dom: 'rt<"d-flex justify-content-between p-3"ip>',
+            language: { url: '//cdn.datatables.net/plug-ins/1.13.7/i18n/pt-BR.json' },
+            scrollX: true
+        });
+
+        $('.filter-input').on('keyup change', function() {
+            let idx = $(this).parent().index();
+            table.column(idx).search(this.value).draw();
+            isFiltered = true;
+            $('#chartsArea').fadeIn();
+        });
+
+        table.on('draw', () => { if(isFiltered) updateCharts(); });
+    }
+
+    function renderPills() {
+        const box = $('#pillBox').empty();
+        columns.forEach((c, i) => {
+            const active = table.column(i).visible() ? 'active' : '';
+            box.append(`<div class="column-pill ${active}" id="p-${i}" onclick="toggleCol(${i})">
+                <i class="fas ${active ? 'fa-check' : 'fa-times'}"></i>${c}</div>`);
+        });
+    }
+
+    window.toggleCol = function(i) {
+        const col = table.column(i);
+        const visible = !col.visible();
+        col.visible(visible);
+        $(`#p-${i}`).toggleClass('active', visible).find('i').toggleClass('fa-check', visible).toggleClass('fa-times', !visible);
+        if(isFiltered) updateCharts();
+    };
+
+    window.toggleAll = (state) => { 
+        table.columns().visible(state); 
+        renderPills(); 
+        if(isFiltered) updateCharts();
+    };
+
+    function updateCharts() {
+        const container = $('#chartsArea');
+        const data = table.rows({search:'applied'}).data().toArray();
+        
+        columns.forEach((name, i) => {
+            if(!table.column(i).visible()) { removeChart(name); return; }
+            
+            const vals = data.map(r => r[name]);
+            const analysis = analyze(vals);
+            if(analysis.type === 'ignore') { removeChart(name); return; }
+
+            if(!$(`#w-${i}`).length) {
+                container.append(`<div class="col-12 col-md-6 col-lg-4" id="w-${i}">
+                    <div class="card card-custom chart-card"><canvas id="c-${i}"></canvas></div></div>`);
+            }
+
+            const ctx = document.getElementById(`c-${i}`).getContext('2d');
+            if(charts[name]) charts[name].destroy();
+            charts[name] = new Chart(ctx, {
+                type: analysis.type === 'cat' ? 'doughnut' : 'bar',
+                data: {
+                    labels: Object.keys(analysis.counts),
+                    datasets: [{ data: Object.values(analysis.counts), backgroundColor: ['#0d6efd', '#6610f2', '#0dcaf0', '#fd7e14', '#198754'] }]
+                },
+                options: { 
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { title: { display: true, text: name }, legend: { display: analysis.type === 'cat', position: 'bottom' } }
+                }
+            });
+        });
+    }
+
+    function removeChart(n) { if(charts[n]) { charts[n].destroy(); delete charts[n]; } $(`[id^=w-]`).each(function(){ if(this.id.includes(columns.indexOf(n))) $(this).remove(); }); }
+
+    function analyze(v) {
+        let c = {};
+        v.forEach(x => { let k = x || "(Vazio)"; c[k] = (c[k] || 0) + 1; });
+        let d = Object.keys(c).length;
+        if(d <= 1 || d > 50) return {type:'ignore'};
+        return { type: d <= 8 ? 'cat' : 'num', counts: c };
+    }
+</script>
+</body>
+</html>

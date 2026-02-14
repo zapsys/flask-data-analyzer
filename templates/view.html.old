@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ file.filename }} - Visualização Excel</title>
+    
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.datatables.net/1.13.7/css/dataTables.bootstrap5.min.css" rel="stylesheet">
+    <link href="https://cdn.datatables.net/buttons/2.4.2/css/buttons.bootstrap5.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+
+    <style>
+        body { background-color: #f0f2f5; padding: 20px; }
+        
+        /* Custom Header Inputs */
+        .filter-input {
+            width: 100%;
+            padding: 4px;
+            font-size: 0.85rem;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            margin-top: 5px;
+        }
+
+        /* Table Styling */
+        th { font-size: 0.9rem; white-space: nowrap; vertical-align: top; background-color: #fff !important; }
+        td { font-size: 0.85rem; }
+
+        /* Chart Area */
+        #chartsArea { display: none; margin-top: 40px; margin-bottom: 50px; }
+        
+        /* NOVO ESTILO DOS CARDS (Para você ver a diferença) */
+        .chart-card { 
+            background: white; 
+            padding: 10px; 
+            border-radius: 8px; 
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08); 
+            height: 300px; 
+            border-top: 4px solid #0d6efd; /* Borda AZUL no topo para confirmar update */
+        }
+        
+        .section-divider {
+            border-top: 1px solid #dee2e6;
+            margin: 30px 0;
+            position: relative;
+            text-align: center;
+        }
+        .section-label {
+            background: #f0f2f5;
+            padding: 0 15px;
+            color: #0d6efd;
+            font-weight: bold;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            position: relative;
+            top: -10px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h3 class="fw-bold text-dark"><i class="fas fa-file-excel text-success me-2"></i>{{ file.filename }}</h3>
+        <div>
+            <span class="badge bg-primary me-2" style="font-size: 1rem;">Total: <span id="rowCount">0</span></span>
+            <a href="{{ url_for('index') }}" class="btn btn-outline-secondary btn-sm">Voltar</a>
+        </div>
+    </div>
+
+    <div class="card shadow-sm mb-4 border-0">
+        <div class="card-body p-2">
+            <table id="dataTable" class="table table-bordered table-striped w-100">
+                <thead>
+                    <tr>
+                        {% for col in columns %}
+                            <th>{{ col }}</th>
+                        {% endfor %}
+                    </tr>
+                    <tr id="filterRow">
+                        {% for col in columns %}
+                            <th class="p-1">
+                                <input type="text" class="filter-input" placeholder="Buscar..." data-col-index="{{ loop.index0 }}">
+                            </th>
+                        {% endfor %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in data %}
+                    <tr>
+                        {% for col in columns %}
+                            <td>{{ row[col] }}</td>
+                        {% endfor %}
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="section-divider" id="chartDivider" style="display:none;">
+        <span class="section-label"><i class="fas fa-chart-pie me-2"></i>Dashboard Visual</span>
+    </div>
+
+    <div id="chartsArea" class="row g-3"> </div>
+</div>
+
+<script src="https://code.jquery.com/jquery-3.7.0.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.datatables.net/1.13.7/js/jquery.dataTables.min.js"></script>
+<script src="https://cdn.datatables.net/1.13.7/js/dataTables.bootstrap5.min.js"></script>
+<script src="https://cdn.datatables.net/buttons/2.4.2/js/dataTables.buttons.min.js"></script>
+<script src="https://cdn.datatables.net/buttons/2.4.2/js/buttons.html5.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<script>
+    const rawData = {{ data | tojson }};
+    const columns = {{ columns | tojson }};
+    let charts = {};
+    let isFiltered = false;
+
+    $(document).ready(function() {
+        var table = $('#dataTable').DataTable({
+            dom: 'Brtip',
+            orderCellsTop: true,
+            fixedHeader: true,
+            scrollX: true,
+            buttons: ['excel', 'csv'],
+            pageLength: 25,
+            language: { url: '//cdn.datatables.net/plug-ins/1.13.7/i18n/pt-BR.json' }
+        });
+
+        $('.filter-input').on('keyup change', function () {
+            let colIdx = $(this).data('col-index');
+            if (table.column(colIdx).search() !== this.value) {
+                table.column(colIdx).search(this.value).draw();
+                
+                isFiltered = true;
+                $('#chartsArea').fadeIn();
+                $('#chartDivider').fadeIn();
+            }
+        });
+
+        table.on('draw', function () {
+            if (isFiltered) {
+                updateCharts(table);
+            }
+            $('#rowCount').text(table.rows({search:'applied'}).count());
+        });
+
+        $('#rowCount').text(table.rows().count());
+    });
+
+    function updateCharts(table) {
+        const container = document.getElementById('chartsArea');
+        const filteredData = table.rows({ search: 'applied' }).data().toArray();
+        
+        columns.forEach((colName, idx) => {
+            const values = filteredData.map(row => row[idx]);
+            const analysis = analyzeColumn(values);
+
+            if (analysis.type === 'ignore') {
+                removeChart(colName);
+                return;
+            }
+
+            if (!document.getElementById('wrapper-' + colName)) {
+                const colDiv = document.createElement('div');
+                
+                // --- AQUI ESTÁ A MÁGICA DA RESPONSIVIDADE ---
+                // col-12: Celular (1 por linha)
+                // col-md-6: Tablet (2 por linha)
+                // col-lg-4: Notebook (3 por linha)
+                // col-xxl-3: Monitor Grande (4 por linha)
+                colDiv.className = 'col-12 col-md-6 col-lg-4 col-xxl-3'; 
+                
+                colDiv.id = 'wrapper-' + colName;
+                // Adicionei height:100% no canvas container
+                colDiv.innerHTML = `
+                    <div class="chart-card">
+                        <div style="position: relative; height: 100%; width: 100%;">
+                            <canvas id="chart-${colName}"></canvas>
+                        </div>
+                    </div>`;
+                container.appendChild(colDiv);
+            }
+
+            const ctx = document.getElementById('chart-' + colName).getContext('2d');
+            if (charts[colName]) charts[colName].destroy();
+
+            charts[colName] = new Chart(ctx, {
+                type: analysis.type === 'categorical' ? 'doughnut' : 'bar',
+                data: {
+                    labels: Object.keys(analysis.counts),
+                    datasets: [{
+                        label: colName,
+                        data: Object.values(analysis.counts),
+                        backgroundColor: generateColors(Object.keys(analysis.counts).length),
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false, // Importante para preencher o card
+                    plugins: {
+                        title: { display: true, text: colName, font: {size: 14, weight: 'bold'} },
+                        legend: { display: analysis.type === 'categorical', position: 'bottom', labels: {boxWidth: 10, font:{size:10}} }
+                    }
+                }
+            });
+        });
+    }
+
+    function removeChart(colName) {
+        if (charts[colName]) { charts[colName].destroy(); delete charts[colName]; }
+        const w = document.getElementById('wrapper-' + colName);
+        if (w) w.remove();
+    }
+
+    function analyzeColumn(values) {
+        let counts = {};
+        let isNumeric = true;
+        let validCount = 0;
+
+        values.forEach(val => {
+            let v = (val === "" || val === null) ? "(Vazio)" : val;
+            counts[v] = (counts[v] || 0) + 1;
+            if (v !== "(Vazio)") {
+                validCount++;
+                if (isNaN(parseFloat(String(v).replace(',','.')))) isNumeric = false;
+            }
+        });
+
+        const distinct = Object.keys(counts).length;
+        if (validCount === 0 || distinct <= 1) return { type: 'ignore' };
+        
+        if (distinct <= 8) return { type: 'categorical', counts: counts };
+        
+        if (isNumeric && distinct > 1) {
+            const sorted = Object.entries(counts).sort((a,b) => b[1] - a[1]).slice(0, 10);
+            return { type: 'numeric', counts: Object.fromEntries(sorted) };
+        }
+        
+        return { type: 'ignore' };
+    }
+
+    function generateColors(count) {
+        const colors = ['#0d6efd', '#6610f2', '#6f42c1', '#d63384', '#dc3545', '#fd7e14', '#ffc107', '#198754', '#20c997', '#0dcaf0'];
+        return Array(count).fill().map((_, i) => colors[i % colors.length]);
+    }
+</script>
+</body>
+</html>
